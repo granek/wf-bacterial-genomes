@@ -61,7 +61,7 @@ process deNovo {
     """
     LOW_COV_FAIL=0
     FLYE_EXIT_CODE=0
-    flye --asm-coverage 50 --nano-raw reads.fastq.gz --out-dir output --threads "${task.cpus}" || \
+    flye --meta --nano-raw reads.fastq.gz --out-dir output --threads "${task.cpus}" || \
     FLYE_EXIT_CODE=\$?
 
     if [[ \$FLYE_EXIT_CODE -eq 0 ]]; then
