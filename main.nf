@@ -58,10 +58,11 @@ process deNovo {
     script:
     // flye may fail due to low coverage; in this case we don't want to cause the whole
     // workflow to crash --> exit with `0` and don't emit output files
+    def flye_opts = params.flye_opts ?: ""
     """
     LOW_COV_FAIL=0
     FLYE_EXIT_CODE=0
-    flye --meta --nano-hq reads.fastq.gz --out-dir output --threads "${task.cpus}" || \
+    flye $flye_opts reads.fastq.gz --out-dir output --threads "${task.cpus}" || \
     FLYE_EXIT_CODE=\$?
 
     if [[ \$FLYE_EXIT_CODE -eq 0 ]]; then
@@ -70,8 +71,14 @@ process deNovo {
         bgzip "${meta.alias}.draft_assembly.fasta"
     else
         # flye failed --> check the log to see if low coverage caused the failure
-        edge_cov=\$(grep -oP 'Mean edge coverage: \\K\\d+' output/flye.log)
-        ovlp_cov=\$(grep -oP 'Overlap-based coverage: \\K\\d+' output/flye.log)
+        edge_cov=\$(
+            grep -oP 'Mean edge coverage: \\K\\d+' output/flye.log \
+            || echo $FLYE_MIN_COVERAGE_THRESHOLD
+        )
+        ovlp_cov=\$(
+            grep -oP 'Overlap-based coverage: \\K\\d+' output/flye.log \
+            || echo $FLYE_MIN_COVERAGE_THRESHOLD
+        )
         if [[
             \$edge_cov -lt $FLYE_MIN_COVERAGE_THRESHOLD ||
             \$ovlp_cov -lt $FLYE_MIN_COVERAGE_THRESHOLD
@@ -109,7 +116,7 @@ process splitRegions {
     input:
         tuple val(meta), path("align.bam"), path("align.bam.bai")
     output:
-        stdout
+        path "output.txt"
     """
     #!/usr/bin/env python
 
@@ -120,9 +127,10 @@ process splitRegions {
         x.split(${params.chunk_size}, overlap=1000, fixed_size=False)
         for x in medaka.common.get_bam_regions("align.bam"))
     region_list = []
-    for reg in regions:
-        # don't ask...just grep &split!
-        print("${meta.alias}" + '&split!' + str(reg))
+    with open("output.txt", "w") as outfile:
+        for reg in regions:
+            # don't ask...just grep &split!
+            outfile.write("${meta.alias}" + '&split!' + str(reg) + "\\n")
     """
 }
 
@@ -152,7 +160,7 @@ process medakaNetwork {
 }
 
 
-process medakaVariantConsensus {
+process medakaVariantHdf {
     // run medaka consensus for each region
 
     label "medaka"
@@ -186,7 +194,8 @@ process medakaVariant {
     //       reference.* will break
     """
     medaka variant ref.fasta.gz consensus_probs*.hdf vanilla.vcf
-    medaka tools annotate vanilla.vcf ref.fasta.gz align.bam "${meta.alias}.medaka.vcf"
+    bcftools sort vanilla.vcf > vanilla.sorted.vcf
+    medaka tools annotate vanilla.sorted.vcf ref.fasta.gz align.bam "${meta.alias}.medaka.vcf"
     bgzip -i "${meta.alias}.medaka.vcf"
     bcftools stats  "${meta.alias}.medaka.vcf.gz" > "${meta.alias}.variants.stats"
     """
@@ -277,7 +286,6 @@ process getVersions {
     mosdepth --version | sed 's/ /,/' >> versions.txt
     flye --version | sed 's/^/flye,/' >> versions.txt
     python -c "import pomoxis; print(f'pomoxis,{pomoxis.__version__}')" >> versions.txt
-    python -c "import dna_features_viewer; print(f'dna_features_viewer,{dna_features_viewer.__version__}')" >> versions.txt
     """
 }
 
@@ -469,7 +477,12 @@ workflow calling_pipeline {
                 }
             }
             named_refs = deNovo.out.asm.map { meta, asm, stats -> [meta, asm] }
-            read_ref_groups = input_reads.join(named_refs)
+            // Nextflow might be run in strict mode (e.g. in CI) which prevents `join`
+            // from dropping non-matching entries. We have to use `remainder: true` and
+            // filter afterwards instead.
+            read_ref_groups = input_reads.join(named_refs, remainder: true).filter {
+                meta, reads, asm -> asm
+            }
             flye_info = deNovo.out.asm.map { meta, asm, stats -> [meta, stats] }
         } else {
             log.info("Reference based assembly selected.")
@@ -514,7 +527,7 @@ workflow calling_pipeline {
         // medaka variants
         if (params.reference_based_assembly){
             bam_model = regions_bams.combine(medaka_variant_model)
-            hdfs_variant = medakaVariantConsensus(bam_model)
+            hdfs_variant = medakaVariantHdf(bam_model)
             hdfs_grouped = hdfs_variant.groupTuple().combine(alignments, by: [0]).join(named_refs)
             variant = medakaVariant(hdfs_grouped)
             variants = variant.variant_stats

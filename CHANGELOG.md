@@ -4,6 +4,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v0.4.0]
+### Added
+- MacOS ARM64 support
+- New parameter `--flye_opts` for passing additional arguments to `flye`.
+### Changed
+- Clarify docker is default in README
+### Fixed
+- De novo assembly failing due to low coverage in some situations.
+
+## [v0.3.3]
+### Fixed
+- Overwrites in Nextflow config implemented incorrectly
+
+### Changed
+- Updated Medaka to 1.9.1.
+
+## [v0.3.2]
+### Fixed
+- Edge case where medaka variant output is unsorted and causes medaka annotate to exit
+### Changed
+- Bumped minimum required Nextflow version to 23.04.2.
+- Now uses Medaka v1.8.2 with updated models.
+- Options for the `--basecaller_cfg` parameter were updated. The default is now `dna_r10.4.1_e8.2_400bps_sup@v4.2.0`.
+
 ## [v0.3.1]
 ### Changed
 - GitHub issue templates
